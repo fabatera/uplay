@@ -1,0 +1,193 @@
+#!/usr/bin/python3
+
+from __future__ import print_function
+
+import os
+import sys
+import dbus
+import dbus.service
+import dbus.mainloop.glib
+from gi.repository import GLib
+import bluezutils
+import logging
+
+'''
+service file created at:
+/usr/share/dbus-1/services/org.mpris.MediaPlayer2.uplay.service
+
+[D-BUS Service]
+Name=org.mpris.MediaPlayer2.uplay
+Exec=/bin/false
+
+to avoid the error:
+error time=1625755110.144453 sender=org.freedesktop.DBus -> destination=:1.54 error_name=org.freedesktop.DBus.Error.ServiceUnknown reply_serial=7831
+string "The name org.mpris.MediaPlayer2.uplay was not provided by any .service files"
+
+To enable message receiving. Add to /etc/dbus-1/system.d/bluetooth.conf :
+<allow send_interface="org.mpris.MediaPlayer2.uplay"/>
+'''
+MPRIS_MEDIAP_IFACE = "org.mpris.MediaPlayer2"
+MPRIS_PLAYER_IFACE = "org.mpris.MediaPlayer2.Player"
+BLUEZ_MEDIAP_IFACE = "org.bluez.Media1"
+
+class uPlayer(dbus.service.Object):
+
+	def __init__(self, bus, object_path):
+		dbus.service.Object.__init__(self, bus, object_path)
+
+		self.properties = None
+		self.metadata = None
+
+	def set_object(self, obj = None):
+		
+		self.track = dbus.Dictionary({
+				"xesam:title" : "DBus, Magic Bus",
+				"xesam:artist" : ["The Hoo"],
+				"xesam:album" : "My Comunication",
+				"xesam:genre" : ["Phony"],
+				"xesam:trackNumber" : dbus.Int32(1),
+				"mpris:length" : dbus.Int64(10000) },
+				signature="sv")
+
+		self.properties = dbus.Dictionary({
+				"PlaybackStatus" : "stopped",
+				"Identity" : "SimplePlayer",
+				"LoopStatus" : "None",
+				"Rate" : dbus.Double(1.0),
+				"Shuffle" : dbus.Boolean(False),
+				"Metadata" : self.track,
+				"Volume" : dbus.Double(1.0),
+				"Position" : dbus.Int64(10),
+				"MinimumRate" : dbus.Double(1.0),
+				"MaximumRate" : dbus.Double(1.0),
+				"CanGoNext" : dbus.Boolean(False),
+				"CanGoPrevious" : dbus.Boolean(False),
+				"CanPlay" : dbus.Boolean(True),
+				#"CanPause" : dbus.Boolean(True),
+				"CanSeek" : dbus.Boolean(False),
+				"CanControl" : dbus.Boolean(True),
+				},
+				signature="sv")
+
+		handler = InputHandler(self)
+		GLib.io_add_watch(sys.stdin, GLib.IO_IN,
+						handler.handle)
+
+	@dbus.service.method(MPRIS_MEDIAP_IFACE)
+	def Quit(self):
+		logger.info("Quit")
+		sys.exit()
+
+	@dbus.service.method(MPRIS_MEDIAP_IFACE)
+	def Raise(self):
+		logger.info("Raise")
+
+	@dbus.service.method(MPRIS_PLAYER_IFACE)
+	def PlayPause(self):
+		if self.properties["PlaybackStatus"] is "playing":
+			self.Set(MPRIS_PLAYER_IFACE, "PlaybackStatus","paused")
+		else:
+			self.Set(MPRIS_PLAYER_IFACE, "PlaybackStatus","playing")		
+		logger.info("Status: %s ", self.properties["PlaybackStatus"])
+		logger.debug("Title: %s", self.properties["Metadata"]["xesam:title"])
+
+	@dbus.service.method(MPRIS_PLAYER_IFACE)
+	def Pause(self):
+		self.PlayPause()
+	
+	@dbus.service.method(MPRIS_PLAYER_IFACE)
+	def Play(self):
+		self.PlayPause()
+
+	@dbus.service.signal(dbus.PROPERTIES_IFACE,
+							signature="sa{sv}as")
+	def PropertiesChanged(self, interface, properties,
+						invalidated = dbus.Array()):
+		"""PropertiesChanged(interface, properties, invalidated)
+
+		Send a PropertiesChanged signal. 'properties' is a dictionary
+		containing string parameters as specified in doc/media-api.txt.
+		"""
+		logger.debug ("Properties changed on interface: "+str(interface))
+
+	
+	@dbus.service.method(dbus.PROPERTIES_IFACE,	in_signature="ssv")
+	def Set(self, interface, prop, value):
+		# validate the property name and value, update internal state
+		self.properties[prop] = value
+		self.PropertiesChanged(interface,
+            { prop: value }, [])
+		logger.debug("Set (%s, %s)", prop, value)
+
+	@dbus.service.method(dbus.PROPERTIES_IFACE,	in_signature="ss", out_signature="v")
+	def Get(self, interface, prop):
+		logger.info("Get: "+str(prop))
+		return self.properties[prop]
+
+	@dbus.service.method(dbus.PROPERTIES_IFACE,	in_signature="s", out_signature="a{sv}")
+	def GetAll(self, interface):
+		logger.debug("GetAll on interface: %s", interface)
+		if interface == MPRIS_PLAYER_IFACE:
+			return self.properties
+		if interface == MPRIS_MEDIAP_IFACE:
+			# org.mpris.MediaPlayer2 properties not implemented
+			return self.properties
+
+class InputHandler:
+	def __init__(self, player):
+		self.player = player
+
+		logger.debug("Use python syntax to pass arguments to available methods.\n" \
+        "E.g.: PropertiesChanged(MPRIS_PLAYER_IFACE, {'PlaybackStatus':'stopped'}, [])")
+		self.prompt()
+
+	def prompt(self):
+		logger.debug('>>> ')
+		sys.stdout.flush()
+
+	def handle(self, fd, condition):
+		s = os.read(fd.fileno(), 1024).strip().decode("utf-8")
+		try:
+			cmd = s[:s.find('(')]
+		except ValueError:
+			logger.error("Malformed command")
+			return True
+
+		try:
+			exec ("self.player.%s" % s)
+		except Exception as e:
+			logger.error(e)
+			pass
+		self.prompt()
+		return True
+
+if __name__ == '__main__':
+	dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+	
+	logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(message)s')
+	logger = logging.getLogger(__name__)
+	logger.setLevel(logging.DEBUG)
+	logger.info("Starting uplay MPRIS Player")
+
+	system_bus = dbus.SystemBus()
+	session_bus = dbus.SessionBus()
+	service_name = MPRIS_MEDIAP_IFACE+'.uplay'
+	bus_name = dbus.service.BusName(service_name, session_bus)
+
+	player_path = "/org/mpris/MediaPlayer2"
+	uplay_player = uPlayer(session_bus, player_path)
+
+	adapter_path = bluezutils.find_adapter().object_path
+	logger.debug("adapter_path = %s", adapter_path)
+
+	uplay_player.set_object()
+
+	logger.debug('Registering media player')
+	logger.debug('Properties: %s', uplay_player.properties)	
+	media = dbus.Interface(system_bus.get_object("org.bluez", adapter_path),
+						BLUEZ_MEDIAP_IFACE)
+
+	media.RegisterPlayer(dbus.ObjectPath(player_path), uplay_player.properties)
+
+	mainloop = GLib.MainLoop()
+	mainloop.run()
