@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=org.mpris.MediaPlayer2.uplay
+Exec=/bin/false

@@ -5,7 +5,7 @@ import logging
 import threading
 import struct
 
-L2CAP_UUID = "0100"
+L2CAP_UUID = bluetooth.btcommon.L2CAP_UUID
 AVRCP_UUID = 0x110e
 BTSIG_ID = 0x1958 # BT Sig company ID
 AVRCP_HEADER = bytes((0x48,0x00,0x00,0x19,0x58)) # AVRCP specific commands header.
@@ -223,7 +223,8 @@ def parse_avrcp(packet):
       elif (pdu_ops==0x31): #Register notification
          print("Register events: "+parseevents(payload))
          if (ctype==AVRCP_CTYPE_NOTIFY):
-             respondevent(transactionlabel,payload)
+            #  respondevent(transactionlabel,payload)
+            pass
 
 def nextseq():
    global sequence
@@ -304,11 +305,11 @@ def sendcapabilityreq(socket):
    seq=nextseq()
    data=bytes((0x03,)) # 0x03 = request events.
    b=constructstatusreq(False,seq,0x10,data) # 0x10 = get capabilities
-   print("Writing..."+parsebytes(b))
+   print("Query remote device for event capabilites: \n%s seq:%s" % (parsebytes(b), seq))
    socket.send(b)
    
 print("Searching for services.")
-logging.basicConfig(level=logging.WARN, format='%(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(message)s')
 # Change the address to your own device.
 # addr="BC:98:DF:92:07:2A"  # Motorola One Vision
 addr="48:45:20:61:93:C8"  # Asus laptop
@@ -321,7 +322,7 @@ if (port>0):
     print("Connected.")
     sendcapabilityreq(socket)
     while True:
-      print("Waiting on read:")
+      print("\nWaiting on read:")
       data=socket.recv(1024)
       #        print(data)
       s=""
